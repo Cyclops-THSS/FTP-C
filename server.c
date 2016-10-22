@@ -17,7 +17,9 @@ void *dispatcher(void *);
 int main(int argc, char **argv) {
     Register_Handlers(handlers);
     signal(SIGINT, process_exit);
-    memset(thr_d, -1, sizeof(thr_d));
+
+    for (size_t i = 0; i < sizeof(thr_d) / sizeof(thread_data); i++)
+        clean_thd(&thr_d[i]);
 
     struct sockaddr_in addr;
 
@@ -90,9 +92,7 @@ void process_exit(int sig) {
  */
 void thread_exit(thread_data *d) {
     close(d->connfd);
-    d->connfd = d->status = -1;
-    memset(d->user, -1, sizeof(d->user));
-    memset(d->type, -1, sizeof(d->type));
+    clean_thd(d);
     pthread_exit(NULL);
 }
 

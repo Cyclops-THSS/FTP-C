@@ -33,11 +33,18 @@
 #define MSG_221 "221 Goodbye.\r\n"
 #define MSG_200_PORT "200 PORT command successful.\r\n"
 
+// status definition
+#define ST_NOTHING 0x0UL
+#define ST_WAIT_PASS 0x1UL
+#define ST_LOGGED_IN 0x2UL
+#define ST_TYPE_SET 0x4UL
+#define ST_PORT_SET 0x8UL
+
 typedef struct {
     pthread_t tid;
     int connfd;
-    char user[USER_NAME_MAX];
-    char type[TYPE_MAX];
+    char *user;
+    char *type;
     unsigned long status;
 } thread_data;
 
@@ -52,5 +59,10 @@ typedef struct {
 extern void Register_Handlers(Handler *);
 extern void thread_exit(thread_data *);
 extern void write_s(thread_data *, const char *, size_t);
+extern void clean_thd(thread_data *);
+extern int attr(thread_data *, unsigned long);
+extern void setattr(thread_data *, unsigned long, int);
+extern void clearattr(thread_data *, unsigned long);
+extern void copy_to(void **, const void *, size_t);
 
 #endif
