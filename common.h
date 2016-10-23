@@ -38,6 +38,8 @@
 #define MSG_150 "150 transmission begin.\r\n"
 #define MSG_425 "425 Cannot activate connection.\r\n"
 #define MSG_451 "451 Cannot open file on server.\r\n"
+#define MSG_500 "500 Internal error occurred.\r\n"
+#define MSG_426 "426 connection failure.\r\n"
 
 // status definition
 #define ST_NOTHING 0x0UL
@@ -45,6 +47,7 @@
 #define ST_LOGGED_IN 0x2UL
 #define ST_TYPE_SET 0x4UL
 #define ST_PORT_SET 0x8UL
+#define ST_PASV_SET 0x10UL
 
 extern const char *root_path;
 extern int listen_port;
@@ -55,6 +58,7 @@ typedef struct {
     char *user;
     char *type;
     struct sockaddr_in *remote;
+    int listen;
     unsigned long status;
 } thread_data;
 
@@ -66,6 +70,8 @@ typedef struct {
     pf_handle handle;
 } Handler;
 
+typedef struct { int a, b, c, d, p, q; } Pasv_info;
+
 extern void Register_Handlers(Handler *);
 extern void thread_exit(thread_data *);
 extern void write_s(thread_data *, const char *, size_t);
@@ -76,5 +82,6 @@ extern void setattr(thread_data *, unsigned long, int);
 extern void clearattr(thread_data *, unsigned long);
 extern void copy_to(void **, const void *, size_t);
 extern void set_remote(thread_data *, int, int, int, int, int, int);
+extern Pasv_info pasv_init(thread_data *);
 
 #endif

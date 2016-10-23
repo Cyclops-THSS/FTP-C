@@ -84,8 +84,11 @@ int quit_handle(thread_data *thd, char *st) {
 int port_handle(thread_data *thd, char *st) {
     if (!attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
-    if (attr(thd, ST_PORT_SET))
-        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "port already set!");
+    if (attr(thd, ST_PASV_SET)) {
+        close(thd->listen);
+        thd->listen = -1;
+        clearattr(thd, ST_PASV_SET);
+    }
     int h1, h2, h3, h4, p1, p2;
     sscanf(st, "PORT %d,%d,%d,%d,%d,%d", &h1, &h2, &h3, &h4, &p1, &p2);
     set_remote(thd, h1, h2, h3, h4, p1, p2);
@@ -93,13 +96,62 @@ int port_handle(thread_data *thd, char *st) {
     return sprintf(st, "%s", MSG_200_PORT);
 }
 
-int pasv_handle(thread_data *thd, char *st) { return 0; }
+int pasv_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    if (attr(thd, ST_PORT_SET))
+        clearattr(thd, ST_PORT_SET);
+    if (attr(thd, ST_PASV_SET)) {
+        close(thd->listen);
+        thd->listen = -1;
+        clearattr(thd, ST_PASV_SET);
+    }
+    Pasv_info pi = pasv_init(thd);
+    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == -1) {
+        printf("Error socket(): %s(%d)\n", strerror(errno), errno);
+        return sprintf(st, "%s", MSG_500);
+    }
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(pi.p * 256 + pi.q);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+        printf("Error bind(): %s(%d)\n", strerror(errno), errno);
+        return 1;
+    }
+    if (listen(sock, MAX_CONNECTIONS) == -1) {
+        printf("Error listen(): %s(%d)\n", strerror(errno), errno);
+        return 1;
+    }
+    setattr(thd, ST_PASV_SET, 0);
+    thd->listen = sock;
+    return sprintf(st, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n",
+                   pi.a, pi.b, pi.c, pi.d, pi.p, pi.q);
+}
+
+void send_file(thread_data *thd, char *st, int fd, FILE *fp) {
+    char chunk[CHUNK_SIZE];
+    ssize_t bytes = 0;
+    sprintf(st, "%s", MSG_150);
+    write_s(thd, st, strlen(st));
+    while ((bytes = fread(chunk, sizeof(char), CHUNK_SIZE, fp)) > 0)
+        if (write_b(fd, chunk, bytes) < 0) {
+            sprintf(st, "%s", MSG_426);
+            write_s(thd, st, strlen(st));
+            break;
+        }
+    fclose(fp);
+}
 
 int retr_handle(thread_data *thd, char *st) {
     if (!attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
-    if (!attr(thd, ST_PORT_SET))
-        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "port not set!");
+    if (!attr(thd, ST_PASV_SET | ST_PORT_SET))
+        return sprintf(st, "%s", MSG_425);
     char file_name[1024];
     strcpy(file_name, root_path);
     strcat(file_name, "/");
@@ -107,22 +159,70 @@ int retr_handle(thread_data *thd, char *st) {
     FILE *fp = fopen(file_name, "rb");
     if (fp == NULL)
         return sprintf(st, "%s", MSG_451);
-    char chunk[CHUNK_SIZE];
-    size_t bytes = 0;
     int so_data = socket(AF_INET, SOCK_STREAM, 0);
-    if (connect(so_data, (const struct sockaddr *)thd->remote,
+    if (attr(thd, ST_PORT_SET) &&
+        connect(so_data, (const struct sockaddr *)thd->remote,
                 sizeof(struct sockaddr)) == 0) {
-        sprintf(st, "%s", MSG_150);
-        write_s(thd, st, strlen(st));
-        while ((bytes = fread(chunk, sizeof(char), CHUNK_SIZE, fp)) > 0)
-            write_b(so_data, chunk, bytes);
-        close(so_data);
-    } else
-        return sprintf(st, "%s", MSG_425);
+        send_file(thd, st, so_data, fp);
+    } else if (attr(thd, ST_PASV_SET) && thd->listen != -1) {
+        int connfd = accept(thd->listen, NULL, NULL);
+        if (connfd == -1) {
+            printf("Error accept(): %s(%d)\n", strerror(errno), errno);
+            return sprintf(st, "%s", MSG_500);
+        }
+        send_file(thd, st, connfd, fp);
+    }
+    close(so_data);
     return sprintf(st, "%s", MSG_226);
 }
 
-int stor_handle(thread_data *thd, char *st) { return 0; }
+void get_file(thread_data *thd, char *st, int fd, FILE *fp) {
+    sprintf(st, "%s", MSG_150);
+    write_s(thd, st, strlen(st));
+    char chunk[CHUNK_SIZE];
+    ssize_t bytes = 0;
+    while (1) {
+        if ((bytes = read(fd, chunk, CHUNK_SIZE)) < 0) {
+            sprintf(st, "%s", MSG_426);
+            write_s(thd, st, strlen(st));
+        } else if (bytes == 0)
+            break;
+        fwrite(chunk, sizeof(char), bytes, fp);
+    }
+    fclose(fp);
+}
+
+int stor_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    if (strstr(st + 5, "../"))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_PARAM, "unsupported!");
+    if (!attr(thd, ST_PASV_SET | ST_PORT_SET))
+        return sprintf(st, "%s", MSG_425);
+    char file_name[1024];
+    strcpy(file_name, root_path);
+    strcat(file_name, "/");
+    strcat(file_name, st + 5);
+    FILE *fp = fopen(file_name, "wb");
+    if (fp == NULL)
+        return sprintf(st, "%s", MSG_451);
+
+    int so_data = socket(AF_INET, SOCK_STREAM, 0);
+    if (attr(thd, ST_PORT_SET) &&
+        connect(so_data, (const struct sockaddr *)thd->remote,
+                sizeof(struct sockaddr)) == 0) {
+        get_file(thd, st, so_data, fp);
+    } else if (attr(thd, ST_PASV_SET) && thd->listen != -1) {
+        int connfd = accept(thd->listen, NULL, NULL);
+        if (connfd == -1) {
+            printf("Error accept(): %s(%d)\n", strerror(errno), errno);
+            return sprintf(st, "%s", MSG_500);
+        }
+        get_file(thd, st, connfd, fp);
+    }
+    close(so_data);
+    return sprintf(st, "%s", MSG_226);
+}
 
 Handler _register(pf_check c, pf_handle h) {
     Handler hd;

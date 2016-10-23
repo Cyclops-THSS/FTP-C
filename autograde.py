@@ -92,7 +92,7 @@ def test(port=21, directory='/tmp'):
             credit -= major
         os.remove(directory + '/' + filename)
         os.remove(filename)
-        QUIT
+        # QUIT
         if not ftp.quit().startswith('221'):
             print 'Bad response for QUIT'
             credit -= minor

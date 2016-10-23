@@ -6,8 +6,8 @@
 #include "common.h"
 
 static int listenfd;
-static thread_data thr_d[MAX_CONNECTIONS];
-static Handler handlers[HANDLER_COUNT];
+static thread_data thr_d[MAX_CONNECTIONS] = {};
+static Handler handlers[HANDLER_COUNT] = {};
 int listen_port = 21;
 
 void process_exit(int);
@@ -80,6 +80,47 @@ int main(int argc, char **argv) {
     }
 
     process_exit(0);
+}
+
+/**
+ * Get host ip, choose a port, and return
+ *
+ * @param  thd current thread
+ * @return     (a, b, c, d, p, q) indicates a.b.c.d:(p * 256 + q)
+ */
+Pasv_info pasv_init(thread_data *thd) {
+    static const char *google_dns = "8.8.8.8";
+    static const int dns_port = 53;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock == -1) {
+        printf("Error socket(): %s(%d)\n", strerror(errno), errno);
+        pthread_exit(thd);
+    }
+    Pasv_info pi;
+    memset(&pi, 0, sizeof(pi));
+    struct sockaddr_in local;
+    memset(&local, 0, sizeof(local));
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = inet_addr(google_dns);
+    local.sin_port = htons(dns_port);
+    if (connect(sock, (const struct sockaddr *)&local, sizeof(local)) != 0) {
+        printf("Error connect(): %s(%d)\n", strerror(errno), errno);
+        pthread_exit(thd);
+    }
+    memset(&local, 0, sizeof(local));
+    socklen_t len = sizeof(local);
+    if (getsockname(sock, (struct sockaddr *)&local, &len) != 0) {
+        printf("Error getsockname(): %s(%d)\n", strerror(errno), errno);
+        pthread_exit(NULL);
+    }
+    char buffer[100];
+    const char *p = inet_ntop(AF_INET, &local.sin_addr, buffer, 100);
+    sscanf(p, "%d.%d.%d.%d", &pi.a, &pi.b, &pi.c, &pi.d);
+    int ran = rand() % 45535 + 20000;
+    pi.p = ran / 256;
+    pi.q = ran - pi.p * 256;
+    close(sock);
+    return pi;
 }
 
 /**

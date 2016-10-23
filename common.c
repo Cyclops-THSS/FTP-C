@@ -8,7 +8,8 @@ void clean_thd(thread_data *thd) {
     thd->type = NULL;
     free(thd->remote);
     thd->remote = NULL;
-    thd->status = 0;
+    thd->listen = -1;
+    thd->status = ST_NOTHING;
 }
 
 int attr(thread_data *thd, unsigned long flag) {
