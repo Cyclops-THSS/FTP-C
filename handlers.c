@@ -5,6 +5,8 @@
 
 #include "common.h"
 
+const char *root_path = "/tmp";
+
 static const char *allowed_users[] = {"anonymous"};
 
 int logged_in(const thread_data *thd) { return thd->status == 1; }
@@ -67,11 +69,9 @@ int syst_handle(thread_data *thd, char *st) {
 }
 
 int type_handle(thread_data *thd, char *st) {
-    if (attr(thd, ST_TYPE_SET))
-        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "type already set!");
     copy_to((void **)&thd->type, st + 5, strlen(st + 5) + 1);
     setattr(thd, ST_TYPE_SET, 0);
-    return sprintf(st, "%d %s %s\r\n", CODE_TYPE, "Type set to", thd->type);
+    return sprintf(st, "%d %s %s.\r\n", CODE_TYPE, "Type set to", thd->type);
 }
 
 int quit_handle(thread_data *thd, char *st) {
@@ -82,22 +82,47 @@ int quit_handle(thread_data *thd, char *st) {
 }
 
 int port_handle(thread_data *thd, char *st) {
-    // if (!attr(thd, ST_LOGGED_IN))
-    //     return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
-    // else if (attr(thd, ST_PORT_SET))
-    //     return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "port already set!");
-    // int h1, h2, h3, h4, p1, p2;
-    // sscanf(st, "PORT %d,%d,%d,%d,%d,%d", &h1, &h2, &h3, &h4, &p1, &p2);
-    // unsigned long port = htonl(p1 * 256 + p2);
-    //
-    // return sprintf(st, "%s", MSG_200_PORT);
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    if (attr(thd, ST_PORT_SET))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "port already set!");
+    int h1, h2, h3, h4, p1, p2;
+    sscanf(st, "PORT %d,%d,%d,%d,%d,%d", &h1, &h2, &h3, &h4, &p1, &p2);
+    set_remote(thd, h1, h2, h3, h4, p1, p2);
+    setattr(thd, ST_PORT_SET, 0);
+    return sprintf(st, "%s", MSG_200_PORT);
 }
 
-int pasv_handle(thread_data *thd, char *st) {}
+int pasv_handle(thread_data *thd, char *st) { return 0; }
 
-int retr_handle(thread_data *thd, char *st) {}
+int retr_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    if (!attr(thd, ST_PORT_SET))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "port not set!");
+    char file_name[1024];
+    strcpy(file_name, root_path);
+    strcat(file_name, "/");
+    strcat(file_name, st + 5);
+    FILE *fp = fopen(file_name, "rb");
+    if (fp == NULL)
+        return sprintf(st, "%s", MSG_451);
+    char chunk[CHUNK_SIZE];
+    size_t bytes = 0;
+    int so_data = socket(AF_INET, SOCK_STREAM, 0);
+    if (connect(so_data, (const struct sockaddr *)thd->remote,
+                sizeof(struct sockaddr)) == 0) {
+        sprintf(st, "%s", MSG_150);
+        write_s(thd, st, strlen(st));
+        while ((bytes = fread(chunk, sizeof(char), CHUNK_SIZE, fp)) > 0)
+            write_b(so_data, chunk, bytes);
+        close(so_data);
+    } else
+        return sprintf(st, "%s", MSG_425);
+    return sprintf(st, "%s", MSG_226);
+}
 
-int stor_handle(thread_data *thd, char *st) {}
+int stor_handle(thread_data *thd, char *st) { return 0; }
 
 Handler _register(pf_check c, pf_handle h) {
     Handler hd;

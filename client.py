@@ -1,22 +1,12 @@
-import socket
 import sys
-
-size = 8192
-sock = None
-
+from ftplib import FTP
+ftp = FTP('localhost')
 try:
-    sock = socket.create_connection(('localhost', 21))
+    ftp.login()
     while True:
-        res = sock.recv(size).decode()
-        if res is '':
-            raise Exception('Server does not respond')
-        print(res)
-        msg = sys.stdin.readline()
-        sock.sendall(msg.replace('\n', '\r\n').encode())
-except KeyboardInterrupt:
-    print("bye")
+        line = sys.stdin.readline()
+        print(bytes(str(ftp.sendcmd(line)).encode()))
 except Exception as e:
-    print(e)
+    print(bytes(str(e).encode()))
 finally:
-    if sock:
-        sock.close()
+    ftp.close()

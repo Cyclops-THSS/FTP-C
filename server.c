@@ -8,6 +8,7 @@
 static int listenfd;
 static thread_data thr_d[MAX_CONNECTIONS];
 static Handler handlers[HANDLER_COUNT];
+int listen_port = 21;
 
 void process_exit(int);
 ssize_t read_s(thread_data *, char *);
@@ -15,6 +16,15 @@ int handle_s(thread_data *, char *);
 void *dispatcher(void *);
 
 int main(int argc, char **argv) {
+    if (argc > 1) {
+        for (size_t i = 1; i < argc; i += 2) {
+            if (!strcmp(argv[i], "-port"))
+                listen_port = atoi(argv[i + 1]);
+            if (!strcmp(argv[i], "-root"))
+                root_path = argv[i + 1];
+        }
+    }
+
     Register_Handlers(handlers);
     signal(SIGINT, process_exit);
 
@@ -33,7 +43,7 @@ int main(int argc, char **argv) {
 
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(LISTEN_PORT);
+    addr.sin_port = htons(listen_port);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(listenfd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
@@ -104,16 +114,10 @@ void thread_exit(thread_data *d) {
  * @param length   string length (exclude '\0')
  */
 void write_s(thread_data *thd, const char *sentence, size_t length) {
-    size_t p = 0;
-    while (p <= length) {
-        ssize_t n = write(thd->connfd, sentence + p, length + 1 - p);
-        if (n < 0) {
-            printf("Error write(): %s(%d)\n", strerror(errno), errno);
-            thread_exit(thd);
-        }
-        p += n;
-    }
-    if (p != length + 1) {
+    int p = write_b(thd->connfd, sentence, length);
+    if (p <= 0)
+        thread_exit(thd);
+    if (p != length) {
         printf("Error write_s(): Unfinished writing.\n");
         thread_exit(thd);
     }
