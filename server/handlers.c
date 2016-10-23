@@ -31,6 +31,12 @@ int retr_check(const char *st) { return !strncmp(st, "RETR", 4); }
 
 int stor_check(const char *st) { return !strncmp(st, "STOR", 4); }
 
+/**
+ * USER command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     331 if ready to log in
+ */
 int user_handle(thread_data *thd, char *st) {
     if (attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "user logged in!");
@@ -49,6 +55,12 @@ int user_handle(thread_data *thd, char *st) {
     return sprintf(st, "%d %s", ERR_BAD_PARAM, "user unregistered!\r\n");
 }
 
+/**
+ * PASS command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     230 if logged in
+ */
 int pass_handle(thread_data *thd, char *st) {
     if (attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "user logged in!");
@@ -64,16 +76,34 @@ int pass_handle(thread_data *thd, char *st) {
     return sprintf(st, "%s", MSG_230);
 }
 
+/**
+ * SYST command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     215 everytime
+ */
 int syst_handle(thread_data *thd, char *st) {
     return sprintf(st, "%s", MSG_215);
 }
 
+/**
+ * TYPE command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     200 and the new type
+ */
 int type_handle(thread_data *thd, char *st) {
     copy_to((void **)&thd->type, st + 5, strlen(st + 5) + 1);
     setattr(thd, ST_TYPE_SET, 0);
     return sprintf(st, "%d %s %s.\r\n", CODE_TYPE, "Type set to", thd->type);
 }
 
+/**
+ * QUIT command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     useless
+ */
 int quit_handle(thread_data *thd, char *st) {
     int len = sprintf(st, "%s", MSG_221);
     write_s(thd, st, len);
@@ -81,6 +111,12 @@ int quit_handle(thread_data *thd, char *st) {
     return len; // Useless
 }
 
+/**
+ * PORT command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     200 if set successfully
+ */
 int port_handle(thread_data *thd, char *st) {
     if (!attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
@@ -93,9 +129,15 @@ int port_handle(thread_data *thd, char *st) {
     sscanf(st, "PORT %d,%d,%d,%d,%d,%d", &h1, &h2, &h3, &h4, &p1, &p2);
     set_remote(thd, h1, h2, h3, h4, p1, p2);
     setattr(thd, ST_PORT_SET, 0);
-    return sprintf(st, "%s", MSG_200_PORT);
+    return sprintf(st, "%s", MSG_200);
 }
 
+/**
+ * PASV command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     227, ip and port
+ */
 int pasv_handle(thread_data *thd, char *st) {
     if (!attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
@@ -133,6 +175,13 @@ int pasv_handle(thread_data *thd, char *st) {
                    pi.a, pi.b, pi.c, pi.d, pi.p, pi.q);
 }
 
+/**
+ * Helper function for sending a file to client
+ * @param thd thread_data
+ * @param st  command
+ * @param fd  file descriptor
+ * @param fp  file pointer
+ */
 void send_file(thread_data *thd, char *st, int fd, FILE *fp) {
     char chunk[CHUNK_SIZE];
     ssize_t bytes = 0;
@@ -147,6 +196,12 @@ void send_file(thread_data *thd, char *st, int fd, FILE *fp) {
     fclose(fp);
 }
 
+/**
+ * RETR command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     226 on finishing transmission
+ */
 int retr_handle(thread_data *thd, char *st) {
     if (!attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
@@ -176,6 +231,13 @@ int retr_handle(thread_data *thd, char *st) {
     return sprintf(st, "%s", MSG_226);
 }
 
+/**
+ * Helper function for getting a file from client
+ * @param thd thread_data
+ * @param st  command
+ * @param fd  file descriptor
+ * @param fp  file pointer
+ */
 void get_file(thread_data *thd, char *st, int fd, FILE *fp) {
     sprintf(st, "%s", MSG_150);
     write_s(thd, st, strlen(st));
@@ -192,6 +254,12 @@ void get_file(thread_data *thd, char *st, int fd, FILE *fp) {
     fclose(fp);
 }
 
+/**
+ * STOR command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     226 on finishing transmission
+ */
 int stor_handle(thread_data *thd, char *st) {
     if (!attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
@@ -224,6 +292,12 @@ int stor_handle(thread_data *thd, char *st) {
     return sprintf(st, "%s", MSG_226);
 }
 
+/**
+ * Helper function for register a Handler
+ * @param  c check function
+ * @param  h handle function
+ * @return   Handler object
+ */
 Handler _register(pf_check c, pf_handle h) {
     Handler hd;
     hd.check = c;
@@ -231,6 +305,10 @@ Handler _register(pf_check c, pf_handle h) {
     return hd;
 }
 
+/**
+ * Register all handlers
+ * @param arr container for Handlers
+ */
 void Register_Handlers(Handler *arr) {
     arr[0] = _register(user_check, user_handle);
     arr[1] = _register(pass_check, pass_handle);

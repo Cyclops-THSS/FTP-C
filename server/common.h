@@ -33,7 +33,7 @@
     "331 Guest login ok, send your complete e-mail address as password.\r\n"
 #define MSG_215 "215 UNIX Type: L8\r\n"
 #define MSG_221 "221 Goodbye.\r\n"
-#define MSG_200_PORT "200 PORT command successful.\r\n"
+#define MSG_200 "200 PORT command successful.\r\n"
 #define MSG_226 "226 Transfer complete.\r\n"
 #define MSG_150 "150 transmission begin.\r\n"
 #define MSG_425 "425 Cannot activate connection.\r\n"
