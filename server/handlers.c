@@ -226,6 +226,7 @@ int retr_handle(thread_data *thd, char *st) {
             return sprintf(st, "%s", MSG_500);
         }
         send_file(thd, st, connfd, fp);
+        close(connfd);
     }
     close(so_data);
     return sprintf(st, "%s", MSG_226);
@@ -274,7 +275,6 @@ int stor_handle(thread_data *thd, char *st) {
     FILE *fp = fopen(file_name, "wb");
     if (fp == NULL)
         return sprintf(st, "%s", MSG_451);
-
     int so_data = socket(AF_INET, SOCK_STREAM, 0);
     if (attr(thd, ST_PORT_SET) &&
         connect(so_data, (const struct sockaddr *)thd->remote,
@@ -287,6 +287,7 @@ int stor_handle(thread_data *thd, char *st) {
             return sprintf(st, "%s", MSG_500);
         }
         get_file(thd, st, connfd, fp);
+        close(connfd);
     }
     close(so_data);
     return sprintf(st, "%s", MSG_226);

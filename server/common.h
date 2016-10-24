@@ -18,7 +18,7 @@
 #define MAX_CONNECTIONS 20
 #define HANDLER_COUNT 10
 #define BUFFER_SIZE 8193
-#define CHUNK_SIZE 512
+#define CHUNK_SIZE 4096
 #define USER_NAME_MAX 21
 #define TYPE_MAX 21
 #define REG_EMAIL_STRICT "^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$"
