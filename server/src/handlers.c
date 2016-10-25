@@ -5,31 +5,33 @@
 
 #include "common.h"
 
-const char *root_path = "/tmp";
-
 static const char *allowed_users[] = {"anonymous"};
 
-int logged_in(const thread_data *thd) { return thd->status == 1; }
-
 int user_check(const char *st) { return !strncmp(st, "USER", 4); }
-
 int pass_check(const char *st) { return !strncmp(st, "PASS", 4); }
-
 int syst_check(const char *st) { return !strncmp(st, "SYST", 4); }
-
 int type_check(const char *st) { return !strncmp(st, "TYPE", 4); }
-
 int quit_check(const char *st) { return !strncmp(st, "QUIT", 4); }
-
 int abor_check(const char *st) { return !strncmp(st, "ABOR", 4); }
-
 int port_check(const char *st) { return !strncmp(st, "PORT", 4); }
-
 int pasv_check(const char *st) { return !strncmp(st, "PASV", 4); }
-
 int retr_check(const char *st) { return !strncmp(st, "RETR", 4); }
-
 int stor_check(const char *st) { return !strncmp(st, "STOR", 4); }
+int cwd_check(const char *st) { return !strncmp(st, "CWD", 3); }
+int pwd_check(const char *st) { return !strncmp(st, "PWD", 3); }
+int cdup_check(const char *st) { return !strncmp(st, "CDUP", 4); }
+int dele_check(const char *st) { return !strncmp(st, "DELE", 4); }
+int mkd_check(const char *st) { return !strncmp(st, "MKD", 3); }
+int rmd_check(const char *st) { return !strncmp(st, "RMD", 3); }
+int rnfr_check(const char *st) { return !strncmp(st, "RNFR", 4); }
+int rnto_check(const char *st) { return !strncmp(st, "RNTO", 4); }
+int list_check(const char *st) { return !strncmp(st, "LIST", 4); }
+
+static pf_check all_check_in_turn[] = {
+    user_check, pass_check, syst_check, type_check, quit_check,
+    abor_check, port_check, pasv_check, retr_check, stor_check,
+    cwd_check,  pwd_check,  cdup_check, dele_check, mkd_check,
+    rmd_check,  rnfr_check, rnto_check, list_check};
 
 /**
  * USER command handler
@@ -48,7 +50,7 @@ int user_handle(thread_data *thd, char *st) {
                 return sprintf(st, "%d %s\r\n", ERR_BAD_PARAM,
                                "username too long!");
             }
-            copy_to((void **)&thd->user, st + 5, len + 1);
+            copy_to(&thd->user, st + 5, len + 1);
             setattr(thd, ST_WAIT_PASS, 0);
             return sprintf(st, "%s", MSG_331);
         }
@@ -93,7 +95,7 @@ int syst_handle(thread_data *thd, char *st) {
  * @return     200 and the new type
  */
 int type_handle(thread_data *thd, char *st) {
-    copy_to((void **)&thd->type, st + 5, strlen(st + 5) + 1);
+    copy_to(&thd->type, st + 5, strlen(st + 5) + 1);
     setattr(thd, ST_TYPE_SET, 0);
     return sprintf(st, "%d %s %s.\r\n", CODE_TYPE, "Type set to", thd->type);
 }
@@ -205,10 +207,12 @@ void send_file(thread_data *thd, char *st, int fd, FILE *fp) {
 int retr_handle(thread_data *thd, char *st) {
     if (!attr(thd, ST_LOGGED_IN))
         return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    if (strstr(st + 5, "../"))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_PARAM, "unsupported!");
     if (!attr(thd, ST_PASV_SET | ST_PORT_SET))
         return sprintf(st, "%s", MSG_425);
     char file_name[1024];
-    strcpy(file_name, root_path);
+    strcpy(file_name, thd->prefix);
     strcat(file_name, "/");
     strcat(file_name, st + 5);
     FILE *fp = fopen(file_name, "rb");
@@ -228,6 +232,48 @@ int retr_handle(thread_data *thd, char *st) {
         send_file(thd, st, connfd, fp);
         close(connfd);
     }
+    close(so_data);
+    return sprintf(st, "%s", MSG_226);
+}
+
+/**
+ * LIST command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     info about file or directory in /bin/ls format: written to data
+ * connection
+ */
+int list_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    if (!attr(thd, ST_PASV_SET | ST_PORT_SET))
+        return sprintf(st, "%s", MSG_425);
+    char file_name[1024] = {};
+    strcpy(file_name, thd->prefix);
+    strcat(file_name, "/");
+    strcat(file_name, st + 5);
+    if (check_path(file_name) == IS_INVALID)
+        return sprintf(st, "%d %s\r\n", ERR_BAD_PARAM, "file not exist.");
+    char cmd[1030] = "ls -l ";
+    strcat(cmd, file_name);
+    FILE *fp = popen(cmd, "r");
+    if (fp == NULL)
+        return sprintf(st, "%s", MSG_451);
+    int so_data = socket(AF_INET, SOCK_STREAM, 0);
+    if (attr(thd, ST_PORT_SET) &&
+        connect(so_data, (const struct sockaddr *)thd->remote,
+                sizeof(struct sockaddr)) == 0) {
+        send_file(thd, st, so_data, fp);
+    } else if (attr(thd, ST_PASV_SET) && thd->listen != -1) {
+        int connfd = accept(thd->listen, NULL, NULL);
+        if (connfd == -1) {
+            printf("Error accept(): %s(%d)\n", strerror(errno), errno);
+            return sprintf(st, "%s", MSG_500);
+        }
+        send_file(thd, st, connfd, fp);
+        close(connfd);
+    }
+    pclose(fp);
     close(so_data);
     return sprintf(st, "%s", MSG_226);
 }
@@ -269,7 +315,7 @@ int stor_handle(thread_data *thd, char *st) {
     if (!attr(thd, ST_PASV_SET | ST_PORT_SET))
         return sprintf(st, "%s", MSG_425);
     char file_name[1024];
-    strcpy(file_name, root_path);
+    strcpy(file_name, thd->prefix);
     strcat(file_name, "/");
     strcat(file_name, st + 5);
     FILE *fp = fopen(file_name, "wb");
@@ -294,6 +340,183 @@ int stor_handle(thread_data *thd, char *st) {
 }
 
 /**
+ * CWD command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     250 on success else 550
+ */
+int cwd_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    if (strstr(st + 4, "../"))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_PARAM, "unsupported!");
+    char prefix[1024];
+    strcpy(prefix, thd->prefix);
+    if (*(st + 4) != '/')
+        strcat(prefix, "/");
+    strcat(prefix, st + 4);
+    if (check_path(prefix) == IS_DIR) {
+        copy_to(&thd->prefix, prefix, strlen(prefix) + 1);
+        return sprintf(st, "%s", MSG_250);
+    } else
+        return sprintf(st, "%d %s\r\n", ERR_BAD_FILE,
+                       "No such file or directory");
+}
+
+/**
+ * CDUP command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     250 on success else 550
+ */
+int cdup_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    if (!strcmp(thd->prefix, root_path))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_FILE, "root path reached!");
+    *strrchr(thd->prefix, '/') = '\0';
+    return sprintf(st, MSG_250);
+}
+
+/**
+ * PWD command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     257 and current prefix
+ */
+int pwd_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    return sprintf(st, "%d \"%s\"\r\n", CODE_PWD, thd->prefix);
+}
+
+/**
+ * DELE command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     250 on success else 550
+ */
+int dele_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    char path[1024];
+    strcpy(path, thd->prefix);
+    strcat(path, "/");
+    strcat(path, st + 5);
+    if (strstr(path, "../"))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_PARAM, "unsupported!");
+    int prop;
+    if ((prop = check_path(path)) != IS_INVALID) {
+        if (prop == IS_FILE)
+            remove(path);
+        else {
+            char cmd[1035] = {};
+            sprintf(cmd, "rm -rf %s", path);
+            int status;
+            if (!((status = system(cmd)) != -1 && WIFEXITED(status) &&
+                  WEXITSTATUS(status) == 0))
+                return sprintf(st, "%d %s\r\n", ERR_BAD_FILE,
+                               "removal failed!");
+        }
+        return sprintf(st, "%s", MSG_250);
+    } else
+        return sprintf(st, "%d %s\r\n", ERR_BAD_FILE, "removal failed!");
+}
+
+/**
+ * MKD command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     257 and maked dir on success
+ */
+int mkd_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    char path[1024];
+    strcpy(path, thd->prefix);
+    strcat(path, "/");
+    strcat(path, st + 4);
+    if (check_path(path) == IS_INVALID && !strstr(path, "../")) {
+        if (mkdir(path, 0777) == -1) {
+            printf("Error mkdir(): %s(%d)\n", strerror(errno), errno);
+            return sprintf(st, "%s", MSG_500);
+        }
+        return sprintf(st, "%d \"%s\"\r\n", CODE_PWD, path);
+    } else
+        return sprintf(st, "%d %s\r\n", ERR_BAD_PARAM,
+                       "path exists or illegal!");
+}
+
+/**
+ * RMD command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     250 on success else 550 or 504
+ */
+int rmd_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    char path[1024] = {};
+    strcpy(path, thd->prefix);
+    strcat(path, "/");
+    strcat(path, st + 4);
+    char cmd[1035] = {};
+    sprintf(cmd, "rm -rf %s", path);
+    if (check_path(path) != IS_DIR && !strstr(path, "../")) {
+        int status;
+        if ((status = system(cmd)) != -1 && WIFEXITED(status) &&
+            WEXITSTATUS(status) == 0) {
+            return sprintf(st, "%s", MSG_250);
+        } else
+            return sprintf(st, "%d %s\r\n", ERR_BAD_FILE, "removal failed!");
+    }
+    return sprintf(st, "%d \"%s\"\r\n", ERR_BAD_PARAM,
+                   "path non-exist or illegal!");
+}
+
+/**
+ * RNFR command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     350 on success else 550
+ */
+int rnfr_handle(thread_data *thd, char *st) {
+    if (!attr(thd, ST_LOGGED_IN))
+        return sprintf(st, "%d %s\r\n", ERR_BAD_VERB, "login first!");
+    char path[1024] = {};
+    strcpy(path, thd->prefix);
+    strcat(path, "/");
+    strcat(path, st + 5);
+    if (check_path(path) != IS_INVALID) {
+        copy_to(&thd->temp, path, strlen(path) + 1);
+        return sprintf(st, "%s", MSG_350);
+    }
+    return sprintf(st, "%d %s\r\n", ERR_BAD_FILE, "path does not exist!");
+}
+
+/**
+ * RNTO command handler
+ * @param  thd thread_data
+ * @param  st  command
+ * @return     250 on success else 503
+ */
+int rnto_handle(thread_data *thd, char *st) {
+    if (!thd->temp)
+        return sprintf(st, "%d %s\r\n", ERR_BAD_SEQ, "bad operation sequence!");
+    char path[1024] = {};
+    strcpy(path, thd->prefix);
+    strcat(path, "/");
+    strcat(path, st + 5);
+    if (rename(thd->temp, path) == -1) {
+        printf("Error rename(): %s(%d)\n", strerror(errno), errno);
+        thread_exit(thd);
+    }
+    free(thd->temp);
+    thd->temp = NULL;
+    return sprintf(st, "%s", MSG_250);
+}
+
+/**
  * Helper function for register a Handler
  * @param  c check function
  * @param  h handle function
@@ -306,19 +529,20 @@ Handler _register(pf_check c, pf_handle h) {
     return hd;
 }
 
+static pf_handle all_handle_in_turn[] = {
+    user_handle, pass_handle, syst_handle, type_handle, quit_handle,
+    quit_handle, port_handle, pasv_handle, retr_handle, stor_handle,
+    cwd_handle,  pwd_handle,  cdup_handle, dele_handle, mkd_handle,
+    rmd_handle,  rnfr_handle, rnto_handle, list_handle};
+
+const size_t handler_count = sizeof(all_check_in_turn) / sizeof(pf_check);
+
 /**
  * Register all handlers
  * @param arr container for Handlers
  */
-void Register_Handlers(Handler *arr) {
-    arr[0] = _register(user_check, user_handle);
-    arr[1] = _register(pass_check, pass_handle);
-    arr[2] = _register(syst_check, syst_handle);
-    arr[3] = _register(type_check, type_handle);
-    arr[4] = _register(quit_check, quit_handle);
-    arr[5] = _register(abor_check, quit_handle);
-    arr[6] = _register(port_check, port_handle);
-    arr[7] = _register(pasv_check, pasv_handle);
-    arr[8] = _register(retr_check, retr_handle);
-    arr[9] = _register(stor_check, stor_handle);
+void Register_Handlers(Handler **arr) {
+    *arr = (Handler *)malloc(handler_count * sizeof(Handler));
+    for (size_t i = 0; i < handler_count; i++)
+        (*arr)[i] = _register(all_check_in_turn[i], all_handle_in_turn[i]);
 }

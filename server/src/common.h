@@ -13,10 +13,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #define MAX_CONNECTIONS 20
-#define HANDLER_COUNT 10
 #define BUFFER_SIZE 8193
 #define CHUNK_SIZE 4096
 #define USER_NAME_MAX 21
@@ -26,7 +27,10 @@
 #define ERR_BAD_VERB 502
 #define ERR_BAD_PARAM 504
 #define ERR_UNKNOWN 500
+#define ERR_BAD_FILE 550
+#define ERR_BAD_SEQ 503
 #define CODE_TYPE 200
+#define CODE_PWD 257
 #define MSG_220 "220 FTP server ready.\r\n"
 #define MSG_230 "230 Guest login ok, access restrictions apply.\r\n"
 #define MSG_331                                                                \
@@ -40,6 +44,8 @@
 #define MSG_451 "451 Cannot open file on server.\r\n"
 #define MSG_500 "500 Internal error occurred.\r\n"
 #define MSG_426 "426 connection failure.\r\n"
+#define MSG_250 "250 CWD/CDUP/DELE OK.\r\n"
+#define MSG_350 "350 File exists.\r\n"
 
 // status definition
 #define ST_NOTHING 0x0UL
@@ -49,14 +55,17 @@
 #define ST_PORT_SET 0x8UL
 #define ST_PASV_SET 0x10UL
 
-extern const char *root_path;
 extern int listen_port;
+extern const char *root_path;
+extern const size_t handler_count;
 
 typedef struct {
     pthread_t tid;
     int connfd;
     char *user;
     char *type;
+    char *prefix;
+    char *temp;
     struct sockaddr_in *remote;
     int listen;
     unsigned long status;
@@ -72,7 +81,7 @@ typedef struct {
 
 typedef struct { int a, b, c, d, p, q; } Pasv_info;
 
-extern void Register_Handlers(Handler *);
+extern void Register_Handlers(Handler **);
 extern void thread_exit(thread_data *);
 extern void write_s(thread_data *, const char *, size_t);
 extern int write_b(int, const char *, size_t);
@@ -80,8 +89,14 @@ extern void clean_thd(thread_data *);
 extern int attr(thread_data *, unsigned long);
 extern void setattr(thread_data *, unsigned long, int);
 extern void clearattr(thread_data *, unsigned long);
-extern void copy_to(void **, const void *, size_t);
+extern void copy_to(char **, const void *, size_t);
 extern void set_remote(thread_data *, int, int, int, int, int, int);
 extern Pasv_info pasv_init(thread_data *);
+
+#define IS_DIR 1
+#define IS_FILE 2
+#define IS_INVALID -1
+
+extern int check_path(const char *);
 
 #endif

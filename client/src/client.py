@@ -4,7 +4,7 @@ from UI.ui_client import Ui_MainWindow
 from UI.ui_connect import Ui_Dlg_connect
 from UI.ui_login import Ui_Dlg_login
 from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import QDialog, QFileDialog, QInputDialog, QMainWindow
+from PyQt5.QtWidgets import QDialog, QFileDialog, QInputDialog, QMainWindow, QTreeWidget, QTreeWidgetItem
 from ftplib import FTP
 import ntpath
 
@@ -44,6 +44,56 @@ class Main(QMainWindow, Ui_MainWindow):
         self.btn_upload.clicked.connect(self.s_upload)
         self.btn_download.clicked.connect(self.s_download)
         self.btn_send.clicked.connect(self.s_send)
+        self.btn_list.clicked.connect(self.s_list)
+        self.btn_rename.clicked.connect(self.s_rename)
+        self.btn_mkd.clicked.connect(self.s_mkd)
+        self.btn_dele.clicked.connect(self.s_dele)
+
+    def s_dele(self):
+        dele, ok = QInputDialog.getText(self, 'Name to delete', 'Name:')
+        if ok:
+            try:
+                self.textBrowser.append(self.ftp.delete(dele))
+            except Exception as e:
+                self.textBrowser.append(str(e))
+
+    def s_mkd(self):
+        dirn, ok = QInputDialog.getText(self, 'New dir name', 'Name:')
+        if ok:
+            try:
+                self.textBrowser.append(self.ftp.mkd(dirn))
+            except Exception as e:
+                self.textBrowser.append(str(e))
+
+    def s_rename(self):
+        orig, ok = QInputDialog.getText(self, 'File to rename', 'Relative path:')
+        if ok:
+            new, okk = QInputDialog.getText(self, 'New name', 'Name to set:')
+            if okk:
+                try:
+                    self.textBrowser.append(self.ftp.rename(orig, new))
+                except Exception as e:
+                    self.textBrowser.append(str(e))
+
+    def s_list(self):
+        self.tree.invisibleRootItem().takeChildren()
+        try:
+            self.textBrowser.append(self.ftp.retrlines('LIST .', self.h_list))
+        except Exception as e:
+            self.textBrowser.append(str(e))
+
+
+    def h_list(self, line):
+        self.textBrowser.append(line)
+        if line.startswith('total'):
+            return
+        strs = line.split()
+        root = self.tree.invisibleRootItem()
+        child = QTreeWidgetItem(root)
+        child.setText(0, strs[-1])
+        child.setText(1, strs[4])
+        child.setText(2, '%s %s %s' % (strs[5], strs[6], strs[7]))
+
 
     def set_enabled(self, bool, *args):
         for x in args:
@@ -62,10 +112,12 @@ class Main(QMainWindow, Ui_MainWindow):
     def s_quit(self):
         try:
             self.textBrowser.append(self.ftp.quit())
-            self.set_enabled(False, 'btn_login', 'btn_syst', 'btn_type', 'btn_quit',
-                             'lineEdit', 'btn_send', 'rb_port', 'rb_pasv', 'btn_upload', 'btn_download')
         except Exception as e:
             self.textBrowser.append(str(e))
+        finally:
+            self.set_enabled(False, 'btn_login', 'btn_syst', 'btn_type', 'btn_quit',
+                             'lineEdit', 'btn_send', 'rb_port', 'rb_pasv',
+                             'btn_upload', 'btn_download', 'tree', 'btn_list', 'btn_rename', 'btn_dele', 'btn_mkd')
 
     def s_login(self):
         if self.dlg_login.exec_():
@@ -73,7 +125,7 @@ class Main(QMainWindow, Ui_MainWindow):
                 self.textBrowser.append(self.ftp.login(
                     self.dlg_login.line_user.text(), self.dlg_login.line_pass.text()))
                 self.set_enabled(True, 'rb_port', 'rb_pasv',
-                                 'btn_upload', 'btn_download')
+                                 'btn_upload', 'btn_download', 'tree', 'btn_list', 'btn_rename', 'btn_dele', 'btn_mkd')
             except Exception as e:
                 self.textBrowser.append(str(e))
 
@@ -127,8 +179,11 @@ class Main(QMainWindow, Ui_MainWindow):
 
     def s_send(self):
         text = self.lineEdit.text()
-        if text != '':
-            self.textBrowser.append(self.ftp.sendcmd(text))
+        try:
+            if text != '':
+                self.textBrowser.append(self.ftp.sendcmd(text))
+        except Exception as e:
+            self.textBrowser.append(str(e))
 
 if __name__ == '__main__':
     main = Main()

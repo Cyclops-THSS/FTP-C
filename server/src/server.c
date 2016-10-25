@@ -7,8 +7,9 @@
 
 static int listenfd;
 static thread_data thr_d[MAX_CONNECTIONS] = {};
-static Handler handlers[HANDLER_COUNT] = {};
+static Handler *handlers = NULL;
 int listen_port = 21;
+const char *root_path = "/tmp";
 
 void process_exit(int);
 ssize_t read_s(thread_data *, char *);
@@ -16,6 +17,7 @@ int handle_s(thread_data *, char *);
 void *dispatcher(void *);
 
 int main(int argc, char **argv) {
+
     if (argc > 1) {
         for (size_t i = 1; i < argc; i += 2) {
             if (!strcmp(argv[i], "-port"))
@@ -25,7 +27,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    Register_Handlers(handlers);
+    Register_Handlers(&handlers);
     signal(SIGINT, process_exit);
 
     for (size_t i = 0; i < sizeof(thr_d) / sizeof(thread_data); i++)
@@ -72,6 +74,7 @@ int main(int argc, char **argv) {
             continue;
         }
         thr_d[index].connfd = connfd;
+        copy_to(&thr_d[index].prefix, root_path, strlen(root_path) + 1);
         if (pthread_create(&thr_d[index].tid, NULL, dispatcher,
                            &thr_d[index])) {
             printf("Error pthread_create(): %s(%d)\n", strerror(errno), errno);
@@ -133,6 +136,8 @@ void process_exit(int sig) {
         if (thr_d[i].connfd != -1)
             pthread_join(thr_d[i].tid, NULL);
     close(listenfd);
+    if (handlers)
+        free(handlers);
     exit(0);
 }
 
@@ -202,12 +207,12 @@ int handle_s(thread_data *thd, char *sentence) {
         crlf[0] = '\0';
     // Select handler
     size_t i = 0, ans = -1;
-    for (; i < HANDLER_COUNT; i++)
+    for (; i < handler_count; i++)
         if (handlers[i].check(sentence)) {
             ans = handlers[i].handle(thd, sentence);
             break;
         }
-    if (HANDLER_COUNT == i)
+    if (handler_count == i)
         ans = sprintf(sentence, "%d %s", ERR_BAD_VERB,
                       "Commond not implemented!\r\n");
     return ans;

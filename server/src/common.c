@@ -17,6 +17,10 @@ void clean_thd(thread_data *thd) {
     thd->type = NULL;
     free(thd->remote);
     thd->remote = NULL;
+    free(thd->prefix);
+    thd->prefix = NULL;
+    free(thd->temp);
+    thd->temp = NULL;
     thd->listen = -1;
     thd->status = ST_NOTHING;
 }
@@ -56,7 +60,7 @@ void clearattr(thread_data *thd, unsigned long flag) {
  * @param p    source data pointer
  * @param len  length in byte
  */
-void copy_to(void **dest, const void *p, size_t len) {
+void copy_to(char **dest, const void *p, size_t len) {
     if (*dest)
         free(*dest);
     *dest = malloc(len);
@@ -103,4 +107,21 @@ int write_b(int fd, const char *sentence, size_t length) {
         p += n;
     }
     return p;
+}
+
+/**
+ * check if a path is valid
+ * @param  path the path
+ * @return      IS_FILE or IS_INVALID or IS_DIR
+ */
+int check_path(const char *path) {
+    struct stat s;
+    if (stat(path, &s) == -1 && ENOENT == errno)
+        return IS_INVALID;
+    else {
+        if (s.st_mode & S_IFDIR)
+            return IS_DIR;
+        else
+            return IS_FILE;
+    }
 }
